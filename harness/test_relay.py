@@ -364,3 +364,97 @@ def test_practice_can_start_at_the_stack_stage():
     r.start(w, 0.0)
     step = r.next_step(w, 0.0)
     assert r.stage == "stack" and step.kind == "stack_all" and "unplug" not in r.passed
+
+
+def _colour_cal() -> Calibration:
+    c = cal()
+    c.ball_colors = ["orange", "green"]
+    c.avoid_balls = ["white"]
+    return c
+
+
+def _balls_relay(c, own=None, t=0.0, w=None):
+    r = Relay(MatchConfig(own_color=own, calibration=c))
+    r.stage_index = 2
+    r.start(w, t)
+    return r
+
+
+def test_no_colour_targets_every_ball_colour():
+    c = _colour_cal()
+    w = world([o("ball", "orange", 450, 50), o("ball", "green", 450, 150), o("avoid_ball", "white", 450, 250)], c)
+    r = _balls_relay(c, None, w=w)
+    s = r.next_step(w, 0.0)
+    assert s.kind == "ball" and s.target == "orange"
+    w2 = world([o("ball", "green", 450, 150), o("avoid_ball", "white", 450, 250)], c)
+    r2 = _balls_relay(c, None, w=w2)
+    s2 = r2.next_step(w2, 0.0)
+    assert s2.kind == "ball" and s2.target == "green"
+    w3 = world([o("avoid_ball", "white", 450, 250)], c)
+    r3 = _balls_relay(c, None, w=w3)
+    assert r3.next_step(w3, 0.0).kind == "park"  # white is never a target
+
+
+def test_no_colour_never_takes_out_other_colour():
+    c = _colour_cal()
+    assert MatchConfig(own_color=None, calibration=c).other_color() is None
+    w = world([o("ball", "green", 550, 50), o("ball", "orange", 450, 50)], c)
+    r = _balls_relay(c, None, w=w)
+    s = r.next_step(w, 0.0)
+    assert s.kind == "ball"
+
+
+def test_no_colour_score_counts_all_non_white():
+    c = _colour_cal()
+    w = world([o("ball", "orange", 550, 50), o("ball", "green", 550, 60)], c)
+    r = _balls_relay(c, None, w=w)
+    r.next_step(w, 0.0)
+    r.own_in_bin, r.other_in_bin = r._own_in_bin(w), r._other_in_bin(w)
+    assert r.own_in_bin == 2 and r.other_in_bin == 0
+    assert r.score() == 10
+
+
+def test_eight_ball_take_out_unchanged_without_colour():
+    c = _colour_cal()
+    w = world([o("eight_ball", "black", 550, 50), o("ball", "orange", 450, 50)], c)
+    r = _balls_relay(c, None, w=w)
+    s = r.next_step(w, 0.0)
+    assert s.kind == "take_out" and "black ball" in s.instruction
+
+
+def test_colour_mode_unchanged():
+    c = _colour_cal()
+    w = world([o("ball", "green", 550, 50), o("ball", "orange", 450, 50)], c)
+    r = _balls_relay(c, "orange", w=w)
+    s = r.next_step(w, 0.0)
+    assert s.kind == "take_out" and s.target == "green"
+    r.other_in_bin, r.own_in_bin = 1, 2
+    assert r.score() == 5
+
+
+def test_no_colour_excludes_avoid_balls_listed_in_ball_colors():
+    c = _colour_cal()
+    c.ball_colors = ["orange", "white"]  # white is a coin-flip colour AND a never-grab colour
+    c.avoid_balls = ["white"]
+    w = world([o("ball", "white", 450, 50)], c)
+    r = _balls_relay(c, None, w=w)
+    assert r._scoring_colors() == ["orange"]
+    assert r.next_step(w, 0.0).kind == "park"  # white is never targeted
+
+
+def test_no_colour_skipped_colour_falls_through_to_the_next():
+    c = _colour_cal()
+    w = world([o("ball", "orange", 450, 50), o("ball", "green", 450, 150)], c)
+    r = _balls_relay(c, None, w=w)
+    r.skipped.add("ball:orange")
+    s = r.next_step(w, 0.0)
+    assert s.kind == "ball" and s.target == "green"
+
+
+def test_log_before_start_is_startup_at_zero():
+    r = Relay(MatchConfig(own_color="orange", calibration=cal()))
+    r.log(123456.0, "frozen before the arms opened")
+    assert (r.events[0].t_s, r.events[0].stage) == (0.0, "startup")
+    r.start(world([], cal()), 1000.0)
+    r.log(1002.0, "later")
+    assert r.events[-1].stage == "unplug" and r.events[-1].t_s == 2.0

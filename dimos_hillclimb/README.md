@@ -93,6 +93,52 @@ twice and `check_tower`. The agent gets this plan from `prompt.STATION_PROMPT`. 
 instruction in relay.py's wording, verified from the overhead camera as relay.py does (3 passing polls after the
 gripper opens, 25 s timeout).
 
+### Voice control hooks for `harness run`
+
+`harness run` can be driven from outside (for example a voice front end) with signals and a state file. Find its pid
+with `readlink ~/.dreamlabs/current-harness-run` (the run dir), then the `pid` in that dir's `state.json`.
+
+- `SIGUSR1` freezes the arms where they are, with no home move and no switch-off. Expect a brief settling motion while
+  the driver eases back to the measured pose, not an instant stop. The joints hold the MEASURED pose; the gripper holds
+  the arm's LAST COMMANDED value (so a squeezed object stays squeezed), the measured one only if nothing was ever
+  commanded. If the hold write fails, `arm.hold()` is tried once and both failures go into `alarm`. A freeze works even
+  before the heavy imports finish, and a freeze before the arms open aborts the run.
+- A freeze has three outcomes in `state.json`, in this order: `freezing` (the signal arrived and the loop is being
+  stopped; written from the event loop, never from the signal handler), then `frozen` (the control loop has exited and
+  the hold is in place). A freeze before the arms open goes straight to `done` with reason `frozen_before_open`.
+  `frozen` is never written before the hold is in place, so a front end that sees `freezing` for more than a few
+  seconds without `frozen` has a stuck hold and should alarm.
+- `SIGINT`, `SIGTERM` and `SIGHUP` end the run: the control loop stops, then the arms home, then park (switch off).
+  After a freeze, an end request homes from the hold; a freeze during that home holds again. Once the park has started
+  it can't be interrupted; a freeze then is recorded in the report log and the terminal `error` (reason
+  `freeze_during_park`), never in `alarm`.
+- **The end contract.** An end that lands before the hold is in place is dropped, and nothing re-sends it: say "end"
+  again once the run reports `frozen`. The only ways out of `frozen` are an end signal (the voice "end the run" plus a
+  yes, Ctrl-C in `tmux attach -t match`, or `kill -INT <pid>`) or the red button, which drops brakeless arms. If the
+  CAN bus hangs so the hold or the home move cannot finish, the red button is the only way out. `dreamcli robot down`
+  cannot run while the harness holds the arms lock.
+- **Who may freeze.** Before "go", or the designated stop caller after it, referee permitting: after "go" only the
+  policy may move the robot, and a voice command is a human input (see the rubric's DQ rules).
+- `<run_dir>/state.json` (written atomically) has `version`, `state`, `pid`, `started_at`, `stage`, `dry_run`,
+  `freeze_supported`, `score`, `alarm`, `fault` (only on the fault-while-frozen path), `error`, `reason`,
+  `eight_ball_alert`, `updated_at`. `state` is one of `starting`, `running`, `freezing`, `frozen`, `homing`, `parking`,
+  `done`, `error`; `freezing` can follow `running` or `homing` (a freeze during `starting` stays `starting` until the run aborts to `done`). `reason` is null except on a `done` that
+  was not a normal finish: `frozen_before_open`, `ended_before_open` or `freeze_during_park`. `eight_ball_alert` turns
+  true when Claude sees the black 8-ball in our bin. The symlink `~/.dreamlabs/current-harness-run` points at the run
+  dir (`~/hackathon_runs/<time>` unless `--out`); a run dir is never reused: the default gets a `-<pid>` suffix on a
+  name clash and an `--out` that already has a `state.json` is refused. If the arms lock is refused, the link is put
+  back on the previous run.
+- **Exit code.** A run that ended before the arms opened (frozen or ended) writes `done` but exits 3; an error exits
+  non-zero; a normal end, and a freeze during the park, exit 0.
+- **Signals.** Handlers are installed before the heavy imports. A second end signal before the run proper starts forces
+  the default (KeyboardInterrupt). At exit the ORIGINAL handlers for SIGINT, SIGTERM, SIGHUP and SIGUSR1 are restored;
+  `run_match` also restores the early handlers when it releases the arms lock.
+- **The Claude probe** runs on a daemon thread before the loop starts. Start, freeze and end each wait at most about 5 s
+  for it; a freeze or an end abandons it at once, and a probe that gives no answer turns the Claude checks off.
+- `~/.dreamlabs/arms.lock` (holder `harness run`) keeps `dreamcli robot run` and `harness run` off the arms at once.
+- Dream's `DebugView` (what the model sees) is served on :8093 during a run.
+- `--color` is optional: omit it and stage 3 bins every ball except the avoid (white) balls, the same rule as `--all-colors` (no other-colour take-outs); the 8-ball rescue is unchanged.
+
 Offline, a fake station stands in for Dream-1 (it moves symbolic objects in answer to each instruction):
 
 ```bash
