@@ -36,6 +36,7 @@ _log = logging.getLogger(__name__)
 STATION_CONFIG = pathlib.Path("~/.dreamlabs/station.yaml").expanduser()
 OVERHEAD = "scene"  # the overhead camera's name in the station config
 POLL_S = 0.5
+MAX_RESTARTS = 8  # camera drops and Dream stalls per run (a wrist camera dropped 3 times in 10 s mid-stack)
 FROZEN_POLL_S = 0.5  # how often the frozen wait looks for an end request
 ALARM_POLL_S = 1.0  # ... and for an arm alarm
 PROBE_TIMEOUT_S = 5.0  # the most any path (start, freeze, end) waits for the Claude probe
@@ -312,7 +313,7 @@ async def run_match(match: MatchConfig, checkpoint: str, *, dry_run: bool, out_d
                 left = relay.time_left(time.monotonic())
                 relay.log(time.monotonic(), f"camera dropped ({exc}); reopening cameras, restart {restarts} "
                                             f"with {left:.0f} s left")
-                if restarts > 3 or left < match.stop_margin_s + 15:
+                if restarts > MAX_RESTARTS or left < match.stop_margin_s + 15:
                     fault = exc
                     break
                 if halted():  # a freeze or an end arrived: no camera work now
@@ -322,6 +323,12 @@ async def run_match(match: MatchConfig, checkpoint: str, *, dry_run: bool, out_d
                     fault = exc
                     readers = []
                     break
+                # The old loop closed its client's policy when it stopped: reusing that client failed at once with
+                # "no policy is open" and spent a second restart. Open a fresh one, as the stall path does.
+                if halted():
+                    break
+                clients[current] = await open_model(current)
+                _watch(view, clients[current])
                 continue
             except Exception as exc:  # noqa: BLE001 - a stall, or a fault inside Dream's client (an IK hiccup)
                 left = relay.time_left(time.monotonic())
@@ -340,7 +347,7 @@ async def run_match(match: MatchConfig, checkpoint: str, *, dry_run: bool, out_d
                 # clock has time left, open a fresh loop and carry on from the same step.
                 restarts += 1
                 relay.log(time.monotonic(), f"Dream loop stopped ({exc}); restart {restarts} with {left:.0f} s left")
-                if restarts > 3 or left < match.stop_margin_s + 10:
+                if restarts > MAX_RESTARTS or left < match.stop_margin_s + 10:
                     fault = exc
                     break
                 if halted():

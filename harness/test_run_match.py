@@ -441,7 +441,7 @@ def test_view_follows_restarted_client(stub_dream, tmp_path):
     stub_dream.loop_error = RuntimeError("stalled")
     with pytest.raises(RuntimeError):
         run(stub_dream, tmp_path)
-    assert stub_dream.watched == [stub_dream.client] * 3  # one per restart
+    assert stub_dream.watched == [stub_dream.client] * dream_executor.MAX_RESTARTS  # one per restart
 
 
 def test_real_supervise_writes_stage(tmp_path, monkeypatch):
@@ -837,8 +837,8 @@ def test_loop_fault_survives_a_freeze(stub_dream, tmp_path, ctl, monkeypatch):
     stub_dream.loop_error = RuntimeError("stalled")
 
     def log(self, t, what):
-        if "restart 4" in what:
-            freeze(ctl)  # restart 4 is the one that gives up and records the fault
+        if f"restart {dream_executor.MAX_RESTARTS + 1}" in what:
+            freeze(ctl)  # the restart past the limit is the one that gives up and records the fault
     monkeypatch.setattr(StubRelay, "log", log)
 
     def driver():
