@@ -186,7 +186,7 @@ def main(argv: list[str] | None = None) -> None:
         state = StateFile(out)
         state.update(state="starting", pid=os.getpid(), started_at=time.time(), dry_run=args.dry_run,
                      freeze_supported=True, stage=None, score=None, alarm=None, error=None, reason=None,
-                     eight_ball_alert=False, version=1)
+                     eight_ball_alert=False, end_requested=False, version=1)
         state.link_current()
     try:
         try:
@@ -194,7 +194,7 @@ def main(argv: list[str] | None = None) -> None:
         except BaseException as exc:  # incl. SystemExit from a bad --color; the agent reads state.json
             if state is not None and not (isinstance(exc, SystemExit) and exc.code in (0, None)):
                 try:
-                    state.update(state="error", error=_describe_exit(exc))
+                    state.update(state="error", error=_describe_exit(exc), end_requested=ctl.end_was_requested)
                 except Exception:
                     logging.getLogger(__name__).exception("could not write the error state")
             raise

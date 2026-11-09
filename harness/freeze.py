@@ -40,6 +40,9 @@ class FreezeControl:
         self.freeze: threading.Event = _ReentrantEvent()
         self.end_requested: threading.Event = _ReentrantEvent()
         self.on_freeze: Callable[[], None] | None = None
+        # Sticky: True once any end was asked for (Ctrl-C, kill, the voice agent), even one later dropped. A wrapper
+        # such as harness/autorestart.py reads it from state.json and never restarts a run a person ended.
+        self.end_was_requested = False
 
     def install_freeze_signal(self):
         """Installs the SIGUSR1 handler and returns the one it replaced."""
@@ -55,6 +58,7 @@ class FreezeControl:
                 log.exception("on_freeze callback failed")
 
     def request_end(self) -> None:
+        self.end_was_requested = True  # a plain assignment: safe in a signal handler
         self.end_requested.set()
 
     def begin_end(self) -> bool:

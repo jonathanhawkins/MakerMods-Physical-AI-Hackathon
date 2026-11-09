@@ -1282,3 +1282,38 @@ def test_freeze_while_starting_never_writes_freezing(stub_dream, tmp_path, ctl):
     seen = [s["state"] for s in stub_dream.states]
     assert "freezing" not in seen
     assert seen[-1] == "done" and stub_dream.states[-1]["reason"] == "frozen_before_open"
+
+
+def test_a_run_that_finishes_by_itself_says_no_end_was_requested(stub_dream, tmp_path):
+    run(stub_dream, tmp_path)
+    assert stub_dream.states[-1]["state"] == "done" and stub_dream.states[-1]["end_requested"] is False
+
+
+def test_an_end_signal_is_recorded_for_wrappers(stub_dream, tmp_path, ctl):
+    # harness/autorestart.py must never restart a run a person ended: the terminal state says it was ended.
+    stub_dream.finish = False
+
+    def driver():
+        wait_for(lambda: has_state(stub_dream, "running"))
+        time.sleep(0.1)
+        end()
+    t, errors = in_thread(driver)
+    run(stub_dream, tmp_path, ctl)
+    finish_driver(t, errors)
+    final = json.loads((tmp_path / "state.json").read_text())
+    assert final["state"] == "done" and final["end_requested"] is True
+
+
+def test_an_end_while_frozen_is_recorded_for_wrappers(stub_dream, tmp_path, ctl):
+    stub_dream.finish = False
+
+    def driver():
+        wait_for(lambda: has_state(stub_dream, "running"))
+        time.sleep(0.1)
+        freeze(ctl)
+        wait_for(lambda: has_state(stub_dream, "frozen"))
+        end()
+    t, errors = in_thread(driver)
+    run(stub_dream, tmp_path, ctl)
+    finish_driver(t, errors)
+    assert json.loads((tmp_path / "state.json").read_text())["end_requested"] is True

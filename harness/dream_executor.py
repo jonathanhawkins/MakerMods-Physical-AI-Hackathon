@@ -420,11 +420,11 @@ async def run_match(match: MatchConfig, checkpoint: str, *, dry_run: bool, out_d
                 if error is None:
                     try:
                         _set_state(state, state="done", score=int(relay.score()), error=done_error,
-                                   reason=done_reason)
+                                   reason=done_reason, end_requested=ctl.end_was_requested)
                     except Exception as exc:  # noqa: BLE001
                         _set_state(state, state="error", error=str(exc))
                 else:
-                    _set_state(state, state="error", error=error)
+                    _set_state(state, state="error", error=error, end_requested=ctl.end_was_requested)
             finally:
                 lock.close()
     return relay
