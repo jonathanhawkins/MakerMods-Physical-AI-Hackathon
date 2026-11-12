@@ -98,7 +98,7 @@ def spoken(color: str) -> str:
 class MatchConfig:
     """One match's settings."""
 
-    own_color: str  # the coin-flip colour of our ping-pong balls
+    own_color: str | None  # the coin-flip colour of our ping-pong balls; None: every non-white ball is ours
     time_limit_s: float = 300.0
     budgets_s: dict[str, float] = dataclasses.field(
         default_factory=lambda: {"unplug": 30.0, "stack": 120.0, "balls": 1e9})
@@ -141,6 +141,8 @@ class MatchConfig:
     stop_margin_s: float = 8.0  # stop starting new steps this close to the time limit
     calibration: Calibration = dataclasses.field(default_factory=Calibration)
 
-    def other_color(self) -> str:
+    def other_color(self) -> str | None:
+        if self.own_color is None:
+            return None
         others = [c for c in self.calibration.ball_colors if c != self.own_color]
         return others[0] if others else "other"
